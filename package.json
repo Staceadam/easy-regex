@@ -1,5 +1,6 @@
 {
     "name": "easy-regex",
+    "publisher": "staceadam",
     "displayName": "easy regex",
     "description": "Easily create regex strings using human language.",
     "repository": "https://github.com/Staceadam/easy-regex",
