@@ -2,106 +2,136 @@ import * as vscode from 'vscode'
 import { Configuration, OpenAIApi } from 'openai'
 import 'dotenv/config'
 
-const configuration = new Configuration({
-	apiKey: process.env.OPENAI_API_KEY
-})
-
-const openai = new OpenAIApi(configuration)
-
 const MODEL = 'gpt-3.5-turbo'
+const OPEN_API_KEY = 'OPEN_API_KEY'
+const QUERY_START =
+    'from now on only respond in json. the response MUST be formatted in json with only the following property: regex. The job to respond to is:  regex find '
+const QUERY_END =
+    'Remember you must provide only json with a property of regex, absolutely no additional text or explanation'
+
+const ask = (name: string) => {
+    return vscode.window.showInputBox({ prompt: `Enter ${name}`, ignoreFocusOut: true })
+}
+
+async function checkOpenAPICredentials(context: vscode.ExtensionContext) {
+    const key = await context.secrets.get(OPEN_API_KEY)
+    if (!key) {
+        const apiKey = await ask(
+            'Please enter a valid personal OpenAPI key from https://platform.openai.com/account/api-keys'
+        )
+
+        if (!apiKey?.length) {
+            vscode.window.showErrorMessage('You must enter a valid OpenAPI key')
+        } else {
+            context.secrets.store(OPEN_API_KEY, apiKey)
+        }
+    }
+
+    const configuration = new Configuration({
+        apiKey: await context.secrets.get(OPEN_API_KEY)
+    })
+
+    return new OpenAIApi(configuration)
+}
 
 export function activate(context: vscode.ExtensionContext) {
-	const disposable = vscode.commands.registerCommand('easy-regex.easyRegex', async () => {
-		// Get the active text editor
-		const editor = vscode.window.activeTextEditor
+    const disposable = vscode.commands.registerCommand('easy-regex.easyRegex', async () => {
+        const openai = await checkOpenAPICredentials(context)
 
-		if (editor) {
-			const selection = editor.selection
+        // Get the active text editor
+        const editor = vscode.window.activeTextEditor
 
-			if (!selection || selection.isEmpty) {
-				vscode.window.showErrorMessage('You must select something')
-			}
+        if (editor) {
+            const selection = editor.selection
 
-			const selectionRange = new vscode.Range(
-				selection.start.line,
-				selection.start.character,
-				selection.end.line,
-				selection.end.character
-			)
+            if (!selection || selection.isEmpty) {
+                vscode.window.showErrorMessage('You must select something')
+            }
 
-			const highlighted = editor.document.getText(selectionRange)
+            const selectionRange = new vscode.Range(
+                selection.start.line,
+                selection.start.character,
+                selection.end.line,
+                selection.end.character
+            )
 
-			const searchQuery = await vscode.window.showInputBox({
-				placeHolder: 'What are you trying to match?',
-				prompt: 'Enter Search Query'
-			})
+            const highlighted = editor.document.getText(selectionRange)
 
-			if (searchQuery === '') {
-				vscode.window.showErrorMessage('A search query is mandatory to execute this action')
-			}
+            const searchQuery = await vscode.window.showInputBox({
+                placeHolder: 'What are you trying to match?',
+                prompt: 'Enter Search Query'
+            })
 
-			if (searchQuery !== undefined) {
-				vscode.window.showInformationMessage(`Searching for ${searchQuery}...`)
+            if (searchQuery === '') {
+                vscode.window.showErrorMessage('A search query is mandatory to execute this action')
+            }
 
-				const content =
-					process.env.QUERY_START + `${searchQuery} in this string '${highlighted}'` + process.env.QUERY_END
+            if (searchQuery !== undefined) {
+                vscode.window.showInformationMessage(`Searching for ${searchQuery}...`)
 
-				const chatCompletion = await openai.createChatCompletion({
-					model: MODEL,
-					messages: [{ role: 'user', content }]
-				})
+                //TODO: find a way to store these in actual env vars
+                const content = QUERY_START + `${searchQuery} in this string '${highlighted}'` + QUERY_END
 
-				const final = chatCompletion.data.choices[0]?.message?.content
+                const chatCompletion = await openai.createChatCompletion({
+                    model: MODEL,
+                    messages: [{ role: 'user', content }]
+                })
 
-				if (final) {
-					try {
-						const regexObj = JSON.parse(final)
+                const final = chatCompletion.data.choices[0]?.message?.content
 
-						vscode.window.showInformationMessage(regexObj.regex)
+                if (final) {
+                    try {
+                        const regexObj = JSON.parse(final)
 
-						const decorationType = vscode.window.createTextEditorDecorationType({
-							backgroundColor: 'green',
-							border: '1px solid white'
-						})
+                        vscode.window.showInformationMessage(regexObj.regex)
 
-						let decorationsArray: vscode.DecorationOptions[] = []
-						const lines = highlighted.split('\n')
+                        const decorationType = vscode.window.createTextEditorDecorationType({
+                            backgroundColor: 'green',
+                            border: '1px solid white'
+                        })
 
-						for (let line = 0; line < lines.length; line++) {
-							let matches = lines[line].matchAll(regexObj.regex)
+                        let decorationsArray: vscode.DecorationOptions[] = []
 
-							const matchAll = [...matches]
+                        let matches = highlighted.matchAll(regexObj.regex)
 
-							matchAll.forEach((match) => {
-								if (match !== null && match.index !== undefined) {
-									let range = new vscode.Range(
-										new vscode.Position(line, match.index),
-										new vscode.Position(line, match.index + match[0].length)
-									)
+                        const matchAll = [...matches]
 
-									let decoration = { range }
+                        matchAll.forEach((match) => {
+                            if (match !== null && match.index !== undefined) {
+                                const start = selection.start.character + match.index
+                                const range = new vscode.Range(
+                                    selection.start.line,
+                                    start,
+                                    selection.end.line,
+                                    start + match[0].length
+                                )
 
-									decorationsArray.push(decoration)
-								}
-							})
-						}
+                                const decoration = { range }
 
-						editor.setDecorations(decorationType, decorationsArray)
+                                decorationsArray.push(decoration)
+                            }
+                        })
 
-						vscode.workspace.onDidChangeTextDocument((e) => {
-							decorationType.dispose()
-						})
-					} catch (error) {
-						vscode.window.showWarningMessage(
-							`Did not find a result for "${searchQuery}". Please try again or update the query and try again.`
-						)
-					}
-				}
-			}
-		}
-	})
+                        editor.setDecorations(decorationType, decorationsArray)
 
-	context.subscriptions.push(disposable)
+                        vscode.workspace.onDidChangeTextDocument((e) => {
+                            decorationType.dispose()
+                        })
+                    } catch (error) {
+                        if (error) {
+                            vscode.window.showErrorMessage(String(error))
+                        } else {
+                            vscode.window.showWarningMessage(
+                                `Did not find a result for "${searchQuery}". Please try again or update the query and try again.`
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    })
+
+    context.subscriptions.push(disposable)
 }
 
 export function deactivate() {}

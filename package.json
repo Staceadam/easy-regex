@@ -2,6 +2,7 @@
     "name": "easy-regex",
     "displayName": "easy regex",
     "description": "Easily create regex strings using human language.",
+    "repository": "https://github.com/Staceadam/easy-regex",
     "version": "0.0.1",
     "engines": {
         "vscode": "^1.81.0"
